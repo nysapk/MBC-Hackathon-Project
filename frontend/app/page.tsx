@@ -1,65 +1,194 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import React, { useEffect, useState } from "react";
+import { ethers } from "ethers";
+
+// shadcn/ui components
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Separator } from "@/components/ui/separator";
+import { Trash, Play, Wallet } from "lucide-react";
+
+const ABI: any[] = [ /* ...paste your ABI here... */ ];
+const DEFAULT_CONTRACT_ADDRESS = "";
+
+export default function Page() {
+  const [mounted, setMounted] = useState(false);
+  const [provider, setProvider] = useState<any>(null);
+  const [signer, setSigner] = useState<any>(null);
+  const [account, setAccount] = useState("");
+  const [contractAddress, setContractAddress] = useState(DEFAULT_CONTRACT_ADDRESS);
+  const [contract, setContract] = useState<any>(null);
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [taskCount, setTaskCount] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  const [action, setAction] = useState("");
+  const [amount, setAmount] = useState<number>(0);
+  const [interval, setInterval] = useState<number>(60);
+
+  // mark component as mounted (client-only rendering)
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Initialize provider using Web3Provider
+  useEffect(() => {
+    if (!mounted) return;
+    if ((window as any).ethereum) {
+      const p = new ethers.providers.Web3Provider((window as any).ethereum);
+      setProvider(p);
+    }
+  }, [mounted]);
+
+  // Initialize contract with provider
+  useEffect(() => {
+    if (!mounted) return;
+    if (!provider || !contractAddress) return;
+    setContract(new ethers.Contract(contractAddress, ABI, provider));
+  }, [mounted, provider, contractAddress]);
+
+  const connectWallet = async () => {
+    if (!provider) return alert('Install MetaMask or Base wallet');
+    const s = provider.getSigner();
+    const addr = await s.getAddress();
+    setSigner(s);
+    setAccount(addr);
+    if (contractAddress) setContract(new ethers.Contract(contractAddress, ABI, s));
+  };
+
+  const loadTasks = async () => {
+    if (!contract) return;
+    setLoading(true);
+    try {
+      const count = Number(await contract.taskCount());
+      setTaskCount(count);
+      const arr = [];
+      for (let i = 1; i <= count; i++) {
+        const t = await contract.tasks(i);
+        arr.push({
+          id: i,
+          user: t.user,
+          amount: t.amount.toString(),
+          action: t.action,
+          nextExecution: new Date(Number(t.nextExecution) * 1000),
+          interval: Number(t.interval),
+          active: t.active,
+        });
+      }
+      setTasks(arr.reverse());
+    } catch (err) {
+      console.error(err);
+      alert('Failed to load tasks');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const createTask = async () => {
+    if (!signer || !contract) return alert('Connect wallet');
+    try {
+      const tx = await contract.connect(signer).createTask(action, BigInt(amount), interval);
+      await tx.wait();
+      setAction('');
+      setAmount(0);
+      setInterval(60);
+      await loadTasks();
+    } catch (err) {
+      console.error(err);
+      alert('Create task failed');
+    }
+  };
+
+  const cancelTask = async (id: number) => {
+    if (!signer || !contract) return;
+    try {
+      const tx = await contract.connect(signer).cancelTask(id);
+      await tx.wait();
+      await loadTasks();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const runTask = async (id: number) => {
+    if (!signer || !contract) return;
+    try {
+      const tx = await contract.connect(signer).runTask(id);
+      await tx.wait();
+      await loadTasks();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  if (!mounted) return null; // prevent SSR mismatches
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen bg-slate-50 p-8">
+      <div className="max-w-5xl mx-auto space-y-6">
+        <header className="flex items-center justify-between">
+          <h1 className="text-3xl font-extrabold">TaskAutomator — Dashboard</h1>
+          <div className="flex items-center gap-2">
+            <Input placeholder="Contract address" value={contractAddress} onChange={(e) => setContractAddress(e.target.value)} className="w-96" />
+            <Button onClick={loadTasks}>Load</Button>
+            <Button onClick={connectWallet}>{account ? `${account.slice(0,6)}...${account.slice(-4)}` : 'Connect'}</Button>
+          </div>
+        </header>
+
+        <div className="grid md:grid-cols-2 gap-6">
+          <Card>
+            <CardHeader><CardTitle>Create Task</CardTitle></CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div>
+                  <Label>Action</Label>
+                  <Textarea value={action} onChange={(e) => setAction(e.target.value)} />
+                </div>
+                <div>
+                  <Label>Amount</Label>
+                  <Input type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
+                </div>
+                <div>
+                  <Label>Interval (seconds)</Label>
+                  <Input type="number" value={interval} onChange={(e) => setInterval(Number(e.target.value))} />
+                </div>
+                <div className="flex gap-2">
+                  <Button onClick={createTask}>Create</Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Tasks</CardTitle></CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {loading && <div>Loading tasks...</div>}
+                {tasks.map(t => (
+                  <div key={t.id} className="border p-3 rounded flex justify-between bg-white">
+                    <div>
+                      <div>#{t.id} • {t.active ? 'Active' : 'Inactive'}</div>
+                      <div>{t.action}</div>
+                      <div>Amount: {t.amount} • Interval: {t.interval}s</div>
+                      <div>Next execution: {t.nextExecution.toLocaleString()}</div>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <Button onClick={() => runTask(t.id)}><Play size={14}/> Run</Button>
+                      <Button variant="destructive" onClick={() => cancelTask(t.id)}><Trash size={14}/> Cancel</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+
+        <Separator />
+      </div>
     </div>
   );
 }
